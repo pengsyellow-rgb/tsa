@@ -24,73 +24,79 @@
             z-index: 50;
         }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
     </style>
 </head>
-<body class="bg-slate-50 antialiased">
+<body class="bg-slate-50 antialiased text-black">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
         function App() {
+            // AUTH & USERS
+            const [registeredUsers, setRegisteredUsers] = useState(JSON.parse(localStorage.getItem('accessable_accounts')) || []);
             const [user, setUser] = useState(JSON.parse(localStorage.getItem('accessable_user')) || null);
             const [view, setView] = useState(user ? 'app' : 'login');
+            
+            // AUTH FORM STATES
+            const [attempts, setAttempts] = useState(0);
+            const [error, setError] = useState("");
+            const [recoveryMode, setRecoveryMode] = useState(false);
+
+            // APP STATES
             const [notes, setNotes] = useState(JSON.parse(localStorage.getItem('accessable_notes')) || []);
             const [activeNote, setActiveNote] = useState({ id: Date.now(), title: "Untitled Document", content: "" });
-            
             const [fontSize, setFontSize] = useState(22);
             const [contrast, setContrast] = useState('light');
             const [dyslexic, setDyslexic] = useState(false);
             const [ruler, setRuler] = useState(false);
             const [rulerPos, setRulerPos] = useState(0);
-
             const [speechStatus, setSpeechStatus] = useState('stopped');
             const [speed, setSpeed] = useState(1);
-            
-            // Ref to track chunks for more stable speech
-            const speechQueue = useRef([]);
-            const currentChunkIndex = useRef(0);
 
             useEffect(() => {
                 if(user) localStorage.setItem('accessable_notes', JSON.stringify(notes));
-            }, [notes]);
+                localStorage.setItem('accessable_accounts', JSON.stringify(registeredUsers));
+            }, [notes, registeredUsers]);
 
-            const playNextChunk = () => {
-                if (currentChunkIndex.current >= speechQueue.current.length) {
-                    setSpeechStatus('stopped');
-                    return;
-                }
-
-                const text = speechQueue.current[currentChunkIndex.current];
-                const ut = new SpeechSynthesisUtterance(text);
-                ut.rate = speed;
-                
-                ut.onend = () => {
-                    currentChunkIndex.current++;
-                    playNextChunk();
-                };
-
-                ut.onerror = () => {
-                    setSpeechStatus('stopped');
-                };
-
-                window.speechSynthesis.speak(ut);
+            // --- AUTH LOGIC ---
+            const handleSignup = (e) => {
+                e.preventDefault();
+                const { username, email, password } = e.target.elements;
+                const newUser = { username: username.value, email: email.value, password: password.value };
+                setRegisteredUsers([...registeredUsers, newUser]);
+                alert("Account created! Please log in.");
+                setView('login');
             };
 
+            const handleLogin = (e) => {
+                e.preventDefault();
+                const { identifier, password } = e.target.elements;
+                const found = registeredUsers.find(u => (u.username === identifier.value || u.email === identifier.value) && u.password === password.value);
+                
+                if (found) {
+                    setUser(found);
+                    localStorage.setItem('accessable_user', JSON.stringify(found));
+                    setView('app');
+                    setError("");
+                    setAttempts(0);
+                } else {
+                    const newAttempts = attempts + 1;
+                    setAttempts(newAttempts);
+                    setError("Invalid credentials. Please try again.");
+                }
+            };
+
+            // --- AUDIO LOGIC (STABILIZED) ---
             const toggleSpeech = () => {
                 if (speechStatus === 'stopped') {
-                    window.speechSynthesis.cancel();
-                    
-                    // Split text into meaningful chunks (sentences)
-                    const rawChunks = activeNote.content.match(/[^.!?]+[.!?]*/g) || [activeNote.content];
-                    speechQueue.current = rawChunks.map(c => c.trim()).filter(c => c.length > 0);
-                    currentChunkIndex.current = 0;
-
-                    if (speechQueue.current.length > 0) {
-                        setSpeechStatus('playing');
-                        playNextChunk();
-                    }
+                    window.speechSynthesis.cancel(); // Force Reset
+                    const ut = new SpeechSynthesisUtterance(activeNote.content || "No text detected.");
+                    ut.rate = speed;
+                    ut.onstart = () => setSpeechStatus('playing');
+                    ut.onend = () => setSpeechStatus('stopped');
+                    window.speechSynthesis.speak(ut);
                 } else if (speechStatus === 'playing') {
                     window.speechSynthesis.pause();
                     setSpeechStatus('paused');
@@ -100,17 +106,9 @@
                 }
             };
 
-            const stopSpeech = () => {
-                window.speechSynthesis.cancel();
-                speechQueue.current = [];
-                currentChunkIndex.current = 0;
-                setSpeechStatus('stopped');
-            };
-
-            const saveNote = () => {
-                const updatedNotes = notes.filter(n => n.id !== activeNote.id);
-                setNotes([{...activeNote, timestamp: new Date().toLocaleDateString()}, ...updatedNotes]);
-                alert("Note Saved");
+            const deleteNote = (id, e) => {
+                e.stopPropagation();
+                setNotes(notes.filter(n => n.id !== id));
             };
 
             const getTheme = () => {
@@ -119,50 +117,81 @@
                 return "bg-white text-slate-800 border-slate-200";
             };
 
-            if (view === 'login' || view === 'signup') {
+            // --- RECOVERY VIEW ---
+            if (recoveryMode) {
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
                         <div className="bg-white p-12 rounded-[2.5rem] shadow-2xl w-full max-w-lg text-center">
-                            <h1 className="text-5xl font-black text-slate-900 mb-2 tracking-tighter">Access<span className="text-blue-600">Able</span></h1>
-                            <p className="text-slate-500 mb-10 text-lg">Your Assistive Writing Space</p>
-                            <form onSubmit={(e) => { e.preventDefault(); setUser({username: e.target.username.value}); localStorage.setItem('accessable_user', JSON.stringify({username: e.target.username.value})); setView('app'); }} className="space-y-4 text-left">
-                                <input name="username" type="text" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold text-black" placeholder="Username" />
-                                <input type="password" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold text-black" placeholder="Password" />
-                                <button className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xl hover:bg-blue-700 transition-all">
-                                    {view === 'login' ? 'SIGN IN' : 'SIGN UP'}
-                                </button>
-                            </form>
-                            <button onClick={() => setView(view === 'login' ? 'signup' : 'login')} className="mt-6 text-blue-600 font-bold hover:underline">
-                                {view === 'login' ? "Need an account? Sign up" : "Have an account? Log in"}
-                            </button>
+                            <h2 className="text-3xl font-black mb-4">Reset Password</h2>
+                            <p className="text-slate-500 mb-8 font-medium">Enter your registered email to receive a recovery code.</p>
+                            <input type="email" placeholder="email@example.com" className="w-full p-4 bg-slate-100 rounded-2xl mb-4 font-bold outline-none border-2 border-transparent focus:border-blue-500" />
+                            <button onClick={() => alert("Verification code sent to email!")} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black mb-4">SEND CODE</button>
+                            <button onClick={() => setRecoveryMode(false)} className="text-blue-600 font-bold hover:underline">Back to Login</button>
                         </div>
                     </div>
                 );
             }
 
+            // --- LOGIN / SIGNUP VIEW ---
+            if (view === 'login' || view === 'signup') {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
+                        <div className="bg-white p-12 rounded-[2.5rem] shadow-2xl w-full max-w-lg text-center">
+                            <h1 className="text-5xl font-black text-slate-900 mb-2 tracking-tighter">Access<span className="text-blue-600">Able</span></h1>
+                            <p className="text-slate-500 mb-8 font-medium italic uppercase tracking-widest text-xs">Assistive Productivity Suite</p>
+                            
+                            {error && <p className="bg-red-50 text-red-600 p-3 rounded-xl mb-6 font-bold text-sm border border-red-100">{error}</p>}
+
+                            <form onSubmit={view === 'login' ? handleLogin : handleSignup} className="space-y-4 text-left">
+                                {view === 'signup' && <input name="username" type="text" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Username" />}
+                                {view === 'signup' && <input name="email" type="email" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Email Address" />}
+                                
+                                {view === 'login' && <input name="identifier" type="text" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Username or Email" />}
+                                
+                                <input name="password" type="password" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Password" />
+                                
+                                <button className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xl hover:bg-blue-700 transition-all">
+                                    {view === 'login' ? 'SECURE LOGIN' : 'CREATE ACCOUNT'}
+                                </button>
+                            </form>
+
+                            <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col gap-3">
+                                <button onClick={() => { setView(view === 'login' ? 'signup' : 'login'); setError(""); }} className="text-blue-600 font-bold hover:underline">
+                                    {view === 'login' ? "New user? Register here" : "Already have an account? Login"}
+                                </button>
+                                {attempts >= 3 && (
+                                    <button onClick={() => setRecoveryMode(true)} className="text-red-500 font-bold text-sm hover:underline">Forgot Password?</button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- MAIN APP ---
             return (
                 <div className={`h-screen flex flex-col ${contrast !== 'light' ? 'bg-black' : 'bg-slate-50'}`}>
                     <nav className="h-20 border-b flex items-center justify-between px-8 bg-white border-slate-200 shrink-0 shadow-sm">
                         <div className="flex items-center gap-6">
                             <span className="text-3xl font-black text-blue-600 tracking-tighter">AccessAble</span>
-                            <input 
-                                className="bg-slate-100 px-4 py-2 rounded-xl font-bold text-xl text-slate-700 outline-none border-2 border-transparent focus:border-blue-500 w-72"
-                                value={activeNote.title}
-                                onChange={(e) => setActiveNote({...activeNote, title: e.target.value})}
-                            />
+                            <input className="bg-slate-100 px-4 py-2 rounded-xl font-bold text-slate-700 outline-none border-2 border-transparent focus:border-blue-500 w-64" value={activeNote.title} onChange={(e) => setActiveNote({...activeNote, title: e.target.value})} />
                         </div>
-                        <button onClick={() => {window.speechSynthesis.cancel(); setUser(null); localStorage.removeItem('accessable_user'); setView('login');}} className="px-5 py-2 bg-red-50 text-red-600 rounded-xl text-xs font-black hover:bg-red-100 uppercase">Logout</button>
+                        <div className="flex items-center gap-6">
+                            <span className="font-bold text-slate-400 hidden sm:block">User: {user?.username}</span>
+                            <button onClick={() => {window.speechSynthesis.cancel(); setUser(null); localStorage.removeItem('accessable_user'); setView('login');}} className="px-5 py-2 bg-red-50 text-red-600 rounded-xl text-xs font-black hover:bg-red-100 uppercase">Logout</button>
+                        </div>
                     </nav>
 
                     <div className="flex flex-1 overflow-hidden">
                         <aside className="w-72 bg-white border-r border-slate-100 p-6 hidden lg:flex flex-col shrink-0">
-                            <button onClick={() => setActiveNote({id: Date.now(), title: "New Document", content: ""})} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black hover:bg-blue-700 transition shadow-lg mb-8 tracking-widest text-xs">+ NEW NOTE</button>
-                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Saved Notes</h3>
+                            <button onClick={() => setActiveNote({id: Date.now(), title: "New Document", content: ""})} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black hover:bg-blue-700 transition shadow-lg mb-8 text-xs tracking-widest">+ NEW NOTE</button>
+                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Saved History</h3>
                             <div className="space-y-3 overflow-y-auto flex-1 custom-scrollbar pr-2">
                                 {notes.map(n => (
-                                    <div key={n.id} onClick={() => setActiveNote(n)} className={`p-4 rounded-2xl cursor-pointer border-2 transition-all ${activeNote.id === n.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-transparent hover:bg-slate-50'}`}>
+                                    <div key={n.id} onClick={() => setActiveNote(n)} className={`group p-4 rounded-2xl cursor-pointer border-2 transition-all relative ${activeNote.id === n.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-transparent hover:bg-slate-50'}`}>
                                         <p className={`font-bold truncate text-sm ${activeNote.id === n.id ? 'text-blue-600' : 'text-slate-700'}`}>{n.title}</p>
-                                        <p className="text-[10px] text-slate-400 mt-1">{n.timestamp || 'Just now'}</p>
+                                        <p className="text-[10px] text-slate-400 mt-1">{n.timestamp || 'Recent'}</p>
+                                        <button onClick={(e) => deleteNote(n.id, e)} className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-500 font-bold bg-red-50 w-6 h-6 rounded-full flex items-center justify-center transition-opacity">×</button>
                                     </div>
                                 ))}
                             </div>
@@ -174,42 +203,23 @@
                                     <button onClick={() => setFontSize(s => s + 2)} className="px-4 py-2 hover:bg-white rounded-lg transition font-black text-xl">A+</button>
                                     <button onClick={() => setFontSize(s => Math.max(12, s - 2))} className="px-4 py-2 hover:bg-white rounded-lg transition font-black text-xl">A-</button>
                                 </div>
-                                
                                 <button onClick={() => setContrast(c => c === 'light' ? 'dark' : c === 'dark' ? 'high' : 'light')} className="px-5 py-2.5 bg-slate-100 rounded-xl font-bold text-sm">Contrast</button>
                                 <button onClick={() => setDyslexic(!dyslexic)} className={`px-5 py-2.5 rounded-xl font-bold text-sm ${dyslexic ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>Font</button>
                                 <button onClick={() => setRuler(!ruler)} className={`px-5 py-2.5 rounded-xl font-bold text-sm ${ruler ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>Ruler</button>
-
                                 <div className="h-8 w-[1px] bg-slate-200 mx-2"></div>
-
                                 <div className="flex items-center gap-3">
                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Speed: {speed}x</span>
                                     <input type="range" min="0.5" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(parseFloat(e.target.value))} className="w-24" />
                                 </div>
-                                
                                 <div className="ml-auto flex gap-2">
-                                    <button onClick={toggleSpeech} className="px-6 py-2.5 bg-emerald-500 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-emerald-600 transition min-w-[100px]">
-                                        {speechStatus === 'playing' ? 'Pause' : speechStatus === 'paused' ? 'Resume' : 'Listen'}
-                                    </button>
-                                    {speechStatus !== 'stopped' && <button onClick={stopSpeech} className="px-4 py-2.5 bg-slate-800 text-white rounded-xl font-black text-xs uppercase transition">Stop</button>}
-                                    <button onClick={saveNote} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-blue-700 transition">Save</button>
+                                    <button onClick={toggleSpeech} className="px-6 py-2.5 bg-emerald-500 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-emerald-600 transition min-w-[100px]">{speechStatus === 'playing' ? 'Pause' : speechStatus === 'paused' ? 'Resume' : 'Listen'}</button>
+                                    <button onClick={() => { const updatedNotes = notes.filter(n => n.id !== activeNote.id); setNotes([{...activeNote, timestamp: new Date().toLocaleDateString()}, ...updatedNotes]); alert("Note Saved"); }} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-blue-700 transition">Save</button>
                                 </div>
                             </div>
 
-                            <div 
-                                className="flex-1 max-w-6xl w-full mx-auto relative overflow-hidden mb-4"
-                                onMouseMove={(e) => ruler && setRulerPos(e.clientY - e.currentTarget.getBoundingClientRect().top)}
-                            >
+                            <div className="flex-1 max-w-6xl w-full mx-auto relative overflow-hidden mb-4" onMouseMove={(e) => ruler && setRulerPos(e.clientY - e.currentTarget.getBoundingClientRect().top)}>
                                 {ruler && <div className="ruler-overlay" style={{ top: `${rulerPos - 25}px` }} />}
-                                <textarea 
-                                    className={`w-full h-full p-10 rounded-[3rem] border-4 shadow-2xl outline-none resize-none transition-all duration-300
-                                        ${getTheme()}
-                                        ${dyslexic ? 'dyslexic-mode' : ''}
-                                    `}
-                                    style={{ fontSize: `${fontSize}px` }}
-                                    placeholder="Start writing..."
-                                    value={activeNote.content}
-                                    onChange={(e) => setActiveNote({...activeNote, content: e.target.value})}
-                                />
+                                <textarea className={`w-full h-full p-10 rounded-[3rem] border-4 shadow-2xl outline-none resize-none transition-all duration-300 ${getTheme()} ${dyslexic ? 'dyslexic-mode' : ''}`} style={{ fontSize: `${fontSize}px` }} placeholder="Start writing..." value={activeNote.content} onChange={(e) => setActiveNote({...activeNote, content: e.target.value})} />
                             </div>
                         </main>
                     </div>
