@@ -12,8 +12,6 @@
         @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;700;900&display=swap');
         body { font-family: 'Lexend', sans-serif; overflow: hidden; }
         .dyslexic-mode { letter-spacing: 0.15em; word-spacing: 0.3em; line-height: 2.2; font-weight: 500; }
-        
-        /* Fixed Reading Ruler Logic */
         .ruler-overlay {
             position: absolute;
             pointer-events: none;
@@ -26,30 +24,45 @@
             z-index: 50;
             transition: top 0.1s ease-out;
         }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
     </style>
 </head>
 <body class="bg-slate-50 antialiased">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect } = React;
 
         function App() {
             const [user, setUser] = useState(JSON.parse(localStorage.getItem('accessable_user')) || null);
             const [view, setView] = useState(user ? 'app' : 'login');
-            const [content, setContent] = useState(localStorage.getItem('accessable_content') || "");
             
-            // Accessibility & Speech State
+            // Content & History State
+            const [notes, setNotes] = useState(JSON.parse(localStorage.getItem('accessable_notes')) || []);
+            const [activeNote, setActiveNote] = useState({ id: Date.now(), title: "Untitled Document", content: "" });
+            
             const [fontSize, setFontSize] = useState(20);
             const [contrast, setContrast] = useState('light');
             const [dyslexic, setDyslexic] = useState(false);
             const [ruler, setRuler] = useState(false);
             const [rulerPos, setRulerPos] = useState(0);
-            const [speechStatus, setSpeechStatus] = useState('stopped'); // stopped, playing, paused
+
+            // Speech states
+            const [speechStatus, setSpeechStatus] = useState('stopped');
+            const [voices, setVoices] = useState([]);
+            const [selectedVoice, setSelectedVoice] = useState(0);
+            const [speed, setSpeed] = useState(1);
 
             useEffect(() => {
-                if(user) localStorage.setItem('accessable_content', content);
-            }, [content]);
+                if(user) localStorage.setItem('accessable_notes', JSON.stringify(notes));
+            }, [notes]);
+
+            useEffect(() => {
+                const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
+                loadVoices();
+                window.speechSynthesis.onvoiceschanged = loadVoices;
+            }, []);
 
             const handleAuth = (e) => {
                 e.preventDefault();
@@ -67,13 +80,30 @@
                 setView('login');
             };
 
+            const saveNote = () => {
+                if (!activeNote.content.trim()) return alert("Cannot save an empty note.");
+                const updatedNotes = notes.filter(n => n.id !== activeNote.id);
+                setNotes([{...activeNote, timestamp: new Date().toLocaleDateString()}, ...updatedNotes]);
+                alert("Note saved to history.");
+            };
+
+            const deleteNote = (id, e) => {
+                e.stopPropagation();
+                setNotes(notes.filter(n => n.id !== id));
+            };
+
             const toggleSpeech = () => {
                 if (speechStatus === 'stopped') {
                     window.speechSynthesis.cancel();
-                    const ut = new SpeechSynthesisUtterance(content || "No text to read.");
-                    ut.onend = () => setSpeechStatus('stopped');
-                    window.speechSynthesis.speak(ut);
-                    setSpeechStatus('playing');
+                    const sentences = activeNote.content.match(/[^.!?]+[.!?]*/g) || [activeNote.content];
+                    sentences.forEach((s, i) => {
+                        const ut = new SpeechSynthesisUtterance(s);
+                        if (voices[selectedVoice]) ut.voice = voices[selectedVoice];
+                        ut.rate = speed;
+                        if (i === 0) ut.onstart = () => setSpeechStatus('playing');
+                        if (i === sentences.length - 1) ut.onend = () => setSpeechStatus('stopped');
+                        window.speechSynthesis.speak(ut);
+                    });
                 } else if (speechStatus === 'playing') {
                     window.speechSynthesis.pause();
                     setSpeechStatus('paused');
@@ -81,17 +111,6 @@
                     window.speechSynthesis.resume();
                     setSpeechStatus('playing');
                 }
-            };
-
-            const stopSpeech = () => {
-                window.speechSynthesis.cancel();
-                setSpeechStatus('stopped');
-            };
-
-            const handleMouseMove = (e) => {
-                if (!ruler) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                setRulerPos(e.clientY - rect.top);
             };
 
             const getTheme = () => {
@@ -103,7 +122,7 @@
             if (view === 'login' || view === 'signup') {
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
-                        <div className="bg-white p-12 rounded-[2.5rem] shadow-2xl w-full max-w-lg text-center font-sans">
+                        <div className="bg-white p-12 rounded-[2.5rem] shadow-2xl w-full max-w-lg text-center">
                             <h1 className="text-5xl font-black text-slate-900 mb-2 tracking-tighter">Access<span className="text-blue-600">Able</span></h1>
                             <p className="text-slate-500 mb-10 text-lg">Your Assistive Writing Space</p>
                             <form onSubmit={handleAuth} className="space-y-4 text-left">
@@ -113,7 +132,7 @@
                                     {view === 'login' ? 'SIGN IN' : 'SIGN UP'}
                                 </button>
                             </form>
-                            <button onClick={() => setView(view === 'login' ? 'signup' : 'login')} className="mt-6 text-blue-600 font-bold hover:underline">
+                            <button onClick={() => setView(view === 'login' ? 'signup' : 'login')} className="mt-6 text-blue-600 font-bold hover:underline font-medium">
                                 {view === 'login' ? "Need an account? Sign up" : "Have an account? Log in"}
                             </button>
                         </div>
@@ -124,50 +143,90 @@
             return (
                 <div className={`h-screen flex flex-col transition-all duration-300 ${contrast !== 'light' ? 'bg-black' : 'bg-slate-50'}`}>
                     <nav className="h-20 border-b flex items-center justify-between px-8 bg-white border-slate-200 shadow-sm shrink-0">
-                        <span className="text-3xl font-black text-blue-600 tracking-tighter">AccessAble</span>
                         <div className="flex items-center gap-6">
-                            <span className="font-bold text-slate-500 hidden sm:block italic">Editing as {user?.username}</span>
+                            <span className="text-3xl font-black text-blue-600 tracking-tighter">AccessAble</span>
+                            <input 
+                                className="bg-slate-100 px-4 py-1.5 rounded-xl font-bold text-slate-700 focus:bg-white border-2 border-transparent focus:border-blue-500 transition outline-none"
+                                value={activeNote.title}
+                                onChange={(e) => setActiveNote({...activeNote, title: e.target.value})}
+                            />
+                        </div>
+                        <div className="flex items-center gap-6">
+                            <span className="font-bold text-slate-500 hidden sm:block italic">Welcome, {user?.username}</span>
                             <button onClick={handleLogout} className="px-5 py-2 bg-red-50 text-red-600 rounded-xl text-xs font-black hover:bg-red-100 transition">LOGOUT</button>
                         </div>
                     </nav>
 
-                    <main className="flex-1 flex flex-col p-4 md:p-8 overflow-hidden">
-                        <div className="mb-6 flex flex-wrap gap-2 items-center bg-white border border-slate-200 p-3 rounded-[2rem] shadow-xl w-full max-w-5xl mx-auto shrink-0">
-                            <div className="flex bg-slate-100 p-1 rounded-xl">
-                                <button onClick={() => setFontSize(s => s + 2)} className="px-4 py-2 hover:bg-white rounded-lg transition font-black text-black">A+</button>
-                                <button onClick={() => setFontSize(s => Math.max(12, s - 2))} className="px-4 py-2 hover:bg-white rounded-lg transition font-black text-black">A-</button>
-                            </div>
-                            <button onClick={() => setContrast(c => c === 'light' ? 'dark' : c === 'dark' ? 'high' : 'light')} className="px-5 py-2 bg-slate-100 rounded-xl font-bold text-slate-700 text-sm">Contrast</button>
-                            <button onClick={() => setDyslexic(!dyslexic)} className={`px-5 py-2 rounded-xl font-bold text-sm ${dyslexic ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}>Dyslexia Font</button>
-                            <button onClick={() => setRuler(!ruler)} className={`px-5 py-2 rounded-xl font-bold text-sm ${ruler ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}>Reading Ruler</button>
+                    <div className="flex flex-1 overflow-hidden">
+                        {/* Sidebar: Saved Notes Section */}
+                        <aside className="w-72 bg-white border-r border-slate-100 p-6 hidden lg:flex flex-col shrink-0">
+                            <button onClick={() => setActiveNote({id: Date.now(), title: "New Document", content: ""})} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black hover:bg-blue-700 transition shadow-lg mb-8 tracking-widest text-xs">+ NEW NOTE</button>
                             
-                            <div className="ml-auto flex gap-2">
-                                <button onClick={toggleSpeech} className="px-6 py-2 bg-emerald-500 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-emerald-600 transition min-w-[100px]">
-                                    {speechStatus === 'playing' ? 'Pause' : speechStatus === 'paused' ? 'Resume' : 'Listen'}
-                                </button>
-                                {speechStatus !== 'stopped' && (
-                                    <button onClick={stopSpeech} className="px-4 py-2 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-widest">Stop</button>
-                                )}
+                            <div className="flex-1 flex flex-col min-h-0">
+                                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Saved Notes</h3>
+                                <div className="space-y-3 overflow-y-auto flex-1 custom-scrollbar pr-2 text-black">
+                                    {notes.length === 0 && <p className="text-xs text-slate-400 italic">No saved notes yet</p>}
+                                    {notes.map(n => (
+                                        <div 
+                                            key={n.id} 
+                                            onClick={() => setActiveNote(n)} 
+                                            className={`group p-4 rounded-2xl cursor-pointer border-2 transition-all relative ${activeNote.id === n.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-transparent hover:bg-slate-50'}`}
+                                        >
+                                            <p className={`font-bold truncate text-sm ${activeNote.id === n.id ? 'text-blue-600' : 'text-slate-700'}`}>{n.title}</p>
+                                            <p className="text-[10px] text-slate-400 mt-1">{n.timestamp || 'Just now'}</p>
+                                            <button onClick={(e) => deleteNote(n.id, e)} className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs p-1">✕</button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
+                        </aside>
 
-                        <div 
-                            className="flex-1 max-w-5xl w-full mx-auto relative overflow-hidden mb-4 group"
-                            onMouseMove={handleMouseMove}
-                        >
-                            {ruler && <div className="ruler-overlay" style={{ top: `${rulerPos - 20}px` }} />}
-                            <textarea 
-                                className={`w-full h-full p-12 rounded-[2.5rem] border-4 shadow-2xl outline-none resize-none transition-all duration-300
-                                    ${getTheme()}
-                                    ${dyslexic ? 'dyslexic-mode' : ''}
-                                `}
-                                style={{ fontSize: `${fontSize}px` }}
-                                placeholder="Write or paste your text here..."
-                                value={content}
-                                onChange={(e) => setContent(e.target.value)}
-                            />
-                        </div>
-                    </main>
+                        <main className="flex-1 flex flex-col p-4 md:p-8 overflow-hidden">
+                            {/* Toolbar */}
+                            <div className="mb-6 flex flex-wrap gap-3 items-center bg-white border border-slate-200 p-3 rounded-[2rem] shadow-xl w-full max-w-6xl mx-auto shrink-0 text-black">
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                    <button onClick={() => setFontSize(s => s + 2)} className="px-3 py-1 hover:bg-white rounded-lg transition font-black">A+</button>
+                                    <button onClick={() => setFontSize(s => Math.max(12, s - 2))} className="px-3 py-1 hover:bg-white rounded-lg transition font-black">A-</button>
+                                </div>
+                                <button onClick={() => setContrast(c => c === 'light' ? 'dark' : c === 'dark' ? 'high' : 'light')} className="px-4 py-2 bg-slate-100 rounded-xl font-bold text-xs">Contrast</button>
+                                <button onClick={() => setDyslexic(!dyslexic)} className={`px-4 py-2 rounded-xl font-bold text-xs ${dyslexic ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>Font</button>
+                                <button onClick={() => setRuler(!ruler)} className={`px-4 py-2 rounded-xl font-bold text-xs ${ruler ? 'bg-blue-600 text-white' : 'bg-slate-100'}`}>Ruler</button>
+
+                                <div className="h-8 w-[1px] bg-slate-200 mx-1"></div>
+
+                                <div className="flex items-center gap-2">
+                                    <select className="bg-slate-100 p-2 rounded-lg text-[10px] font-bold w-28 outline-none" onChange={(e) => setSelectedVoice(e.target.value)} value={selectedVoice}>
+                                        {voices.map((v, i) => <option key={i} value={i}>{v.name}</option>)}
+                                    </select>
+                                    <input type="range" min="0.5" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(e.target.value)} className="w-16" title="Speed" />
+                                </div>
+                                
+                                <div className="ml-auto flex gap-2">
+                                    <button onClick={toggleSpeech} className="px-5 py-2 bg-emerald-500 text-white rounded-xl font-black text-[10px] tracking-widest uppercase hover:bg-emerald-600 transition min-w-[80px]">
+                                        {speechStatus === 'playing' ? 'Pause' : speechStatus === 'paused' ? 'Resume' : 'Listen'}
+                                    </button>
+                                    <button onClick={saveNote} className="px-5 py-2 bg-blue-600 text-white rounded-xl font-black text-[10px] tracking-widest uppercase hover:bg-blue-700 transition">Save</button>
+                                </div>
+                            </div>
+
+                            <div 
+                                className="flex-1 max-w-6xl w-full mx-auto relative overflow-hidden mb-4"
+                                onMouseMove={(e) => ruler && setRulerPos(e.clientY - e.currentTarget.getBoundingClientRect().top)}
+                            >
+                                {ruler && <div className="ruler-overlay" style={{ top: `${rulerPos - 20}px` }} />}
+                                <textarea 
+                                    className={`w-full h-full p-12 rounded-[2.5rem] border-4 shadow-2xl outline-none resize-none transition-all duration-300
+                                        ${getTheme()}
+                                        ${dyslexic ? 'dyslexic-mode' : ''}
+                                    `}
+                                    style={{ fontSize: `${fontSize}px` }}
+                                    placeholder="Start typing your note..."
+                                    value={activeNote.content}
+                                    onChange={(e) => setActiveNote({...activeNote, content: e.target.value})}
+                                />
+                            </div>
+                        </main>
+                    </div>
                 </div>
             );
         }
