@@ -34,17 +34,14 @@
         const { useState, useEffect, useRef } = React;
 
         function App() {
-            // AUTH & USERS
             const [registeredUsers, setRegisteredUsers] = useState(JSON.parse(localStorage.getItem('accessable_accounts')) || []);
             const [user, setUser] = useState(JSON.parse(localStorage.getItem('accessable_user')) || null);
             const [view, setView] = useState(user ? 'app' : 'login');
             
-            // AUTH FORM STATES
             const [attempts, setAttempts] = useState(0);
             const [error, setError] = useState("");
             const [recoveryMode, setRecoveryMode] = useState(false);
 
-            // APP STATES
             const [notes, setNotes] = useState(JSON.parse(localStorage.getItem('accessable_notes')) || []);
             const [activeNote, setActiveNote] = useState({ id: Date.now(), title: "Untitled Document", content: "" });
             const [fontSize, setFontSize] = useState(22);
@@ -52,6 +49,7 @@
             const [dyslexic, setDyslexic] = useState(false);
             const [ruler, setRuler] = useState(false);
             const [rulerPos, setRulerPos] = useState(0);
+            
             const [speechStatus, setSpeechStatus] = useState('stopped');
             const [speed, setSpeed] = useState(1);
 
@@ -60,13 +58,11 @@
                 localStorage.setItem('accessable_accounts', JSON.stringify(registeredUsers));
             }, [notes, registeredUsers]);
 
-            // --- AUTH LOGIC ---
             const handleSignup = (e) => {
                 e.preventDefault();
                 const { username, email, password } = e.target.elements;
-                const newUser = { username: username.value, email: email.value, password: password.value };
-                setRegisteredUsers([...registeredUsers, newUser]);
-                alert("Account created! Please log in.");
+                setRegisteredUsers([...registeredUsers, { username: username.value, email: email.value, password: password.value }]);
+                alert("Account created!");
                 setView('login');
             };
 
@@ -74,36 +70,52 @@
                 e.preventDefault();
                 const { identifier, password } = e.target.elements;
                 const found = registeredUsers.find(u => (u.username === identifier.value || u.email === identifier.value) && u.password === password.value);
-                
                 if (found) {
                     setUser(found);
                     localStorage.setItem('accessable_user', JSON.stringify(found));
                     setView('app');
-                    setError("");
-                    setAttempts(0);
                 } else {
-                    const newAttempts = attempts + 1;
-                    setAttempts(newAttempts);
-                    setError("Invalid credentials. Please try again.");
+                    setAttempts(prev => prev + 1);
+                    setError("Try again.");
                 }
             };
 
-            // --- AUDIO LOGIC (STABILIZED) ---
+            // FIXED AUDIO LOGIC
             const toggleSpeech = () => {
+                const synth = window.speechSynthesis;
+
                 if (speechStatus === 'stopped') {
-                    window.speechSynthesis.cancel(); // Force Reset
-                    const ut = new SpeechSynthesisUtterance(activeNote.content || "No text detected.");
+                    synth.cancel(); 
+                    const ut = new SpeechSynthesisUtterance(activeNote.content || "Nothing to read.");
                     ut.rate = speed;
+                    
                     ut.onstart = () => setSpeechStatus('playing');
                     ut.onend = () => setSpeechStatus('stopped');
-                    window.speechSynthesis.speak(ut);
+                    ut.onerror = () => setSpeechStatus('stopped');
+
+                    // Anti-glitch heartbeat
+                    const heartbeat = setInterval(() => {
+                        if (synth.speaking) {
+                            synth.pause();
+                            synth.resume();
+                        } else {
+                            clearInterval(heartbeat);
+                        }
+                    }, 10000);
+
+                    synth.speak(ut);
                 } else if (speechStatus === 'playing') {
-                    window.speechSynthesis.pause();
+                    synth.pause();
                     setSpeechStatus('paused');
-                } else {
-                    window.speechSynthesis.resume();
+                } else if (speechStatus === 'paused') {
+                    synth.resume();
                     setSpeechStatus('playing');
                 }
+            };
+
+            const stopSpeech = () => {
+                window.speechSynthesis.cancel();
+                setSpeechStatus('stopped');
             };
 
             const deleteNote = (id, e) => {
@@ -117,81 +129,64 @@
                 return "bg-white text-slate-800 border-slate-200";
             };
 
-            // --- RECOVERY VIEW ---
             if (recoveryMode) {
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
                         <div className="bg-white p-12 rounded-[2.5rem] shadow-2xl w-full max-w-lg text-center">
                             <h2 className="text-3xl font-black mb-4">Reset Password</h2>
-                            <p className="text-slate-500 mb-8 font-medium">Enter your registered email to receive a recovery code.</p>
-                            <input type="email" placeholder="email@example.com" className="w-full p-4 bg-slate-100 rounded-2xl mb-4 font-bold outline-none border-2 border-transparent focus:border-blue-500" />
-                            <button onClick={() => alert("Verification code sent to email!")} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black mb-4">SEND CODE</button>
-                            <button onClick={() => setRecoveryMode(false)} className="text-blue-600 font-bold hover:underline">Back to Login</button>
+                            <input type="email" placeholder="Enter your email" className="w-full p-4 bg-slate-100 rounded-2xl mb-4 font-bold outline-none" />
+                            <button onClick={() => alert("Code sent!")} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black mb-4">SEND CODE</button>
+                            <button onClick={() => setRecoveryMode(false)} className="text-blue-600 font-bold hover:underline">Back</button>
                         </div>
                     </div>
                 );
             }
 
-            // --- LOGIN / SIGNUP VIEW ---
             if (view === 'login' || view === 'signup') {
                 return (
                     <div className="min-h-screen flex items-center justify-center bg-slate-900 p-6">
                         <div className="bg-white p-12 rounded-[2.5rem] shadow-2xl w-full max-w-lg text-center">
-                            <h1 className="text-5xl font-black text-slate-900 mb-2 tracking-tighter">Access<span className="text-blue-600">Able</span></h1>
-                            <p className="text-slate-500 mb-8 font-medium italic uppercase tracking-widest text-xs">Assistive Productivity Suite</p>
-                            
-                            {error && <p className="bg-red-50 text-red-600 p-3 rounded-xl mb-6 font-bold text-sm border border-red-100">{error}</p>}
-
+                            <h1 className="text-5xl font-black text-slate-900 mb-8 tracking-tighter">Access<span className="text-blue-600">Able</span></h1>
+                            {error && <p className="text-red-600 font-bold mb-4">{error}</p>}
                             <form onSubmit={view === 'login' ? handleLogin : handleSignup} className="space-y-4 text-left">
                                 {view === 'signup' && <input name="username" type="text" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Username" />}
-                                {view === 'signup' && <input name="email" type="email" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Email Address" />}
-                                
-                                {view === 'login' && <input name="identifier" type="text" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Username or Email" />}
-                                
+                                {view === 'signup' && <input name="email" type="email" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Email" />}
+                                <input name="identifier" type="text" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder={view === 'login' ? "User or Email" : "Username"} />
                                 <input name="password" type="password" required className="w-full p-4 bg-slate-100 rounded-2xl outline-none font-bold" placeholder="Password" />
-                                
-                                <button className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xl hover:bg-blue-700 transition-all">
-                                    {view === 'login' ? 'SECURE LOGIN' : 'CREATE ACCOUNT'}
+                                <button className="w-full py-5 bg-blue-600 text-white rounded-2xl font-black text-xl hover:bg-blue-700">
+                                    {view === 'login' ? 'SIGN IN' : 'SIGN UP'}
                                 </button>
                             </form>
-
-                            <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col gap-3">
-                                <button onClick={() => { setView(view === 'login' ? 'signup' : 'login'); setError(""); }} className="text-blue-600 font-bold hover:underline">
-                                    {view === 'login' ? "New user? Register here" : "Already have an account? Login"}
+                            <div className="mt-6 flex flex-col gap-2">
+                                <button onClick={() => setView(view === 'login' ? 'signup' : 'login')} className="text-blue-600 font-bold hover:underline">
+                                    {view === 'login' ? "Need account? Sign up" : "Have account? Login"}
                                 </button>
-                                {attempts >= 3 && (
-                                    <button onClick={() => setRecoveryMode(true)} className="text-red-500 font-bold text-sm hover:underline">Forgot Password?</button>
-                                )}
+                                {attempts >= 3 && <button onClick={() => setRecoveryMode(true)} className="text-red-500 font-bold text-sm underline">Forgot Password?</button>}
                             </div>
                         </div>
                     </div>
                 );
             }
 
-            // --- MAIN APP ---
             return (
                 <div className={`h-screen flex flex-col ${contrast !== 'light' ? 'bg-black' : 'bg-slate-50'}`}>
-                    <nav className="h-20 border-b flex items-center justify-between px-8 bg-white border-slate-200 shrink-0 shadow-sm">
+                    <nav className="h-20 border-b flex items-center justify-between px-8 bg-white border-slate-200 shrink-0">
                         <div className="flex items-center gap-6">
                             <span className="text-3xl font-black text-blue-600 tracking-tighter">AccessAble</span>
                             <input className="bg-slate-100 px-4 py-2 rounded-xl font-bold text-slate-700 outline-none border-2 border-transparent focus:border-blue-500 w-64" value={activeNote.title} onChange={(e) => setActiveNote({...activeNote, title: e.target.value})} />
                         </div>
-                        <div className="flex items-center gap-6">
-                            <span className="font-bold text-slate-400 hidden sm:block">User: {user?.username}</span>
-                            <button onClick={() => {window.speechSynthesis.cancel(); setUser(null); localStorage.removeItem('accessable_user'); setView('login');}} className="px-5 py-2 bg-red-50 text-red-600 rounded-xl text-xs font-black hover:bg-red-100 uppercase">Logout</button>
-                        </div>
+                        <button onClick={() => {window.speechSynthesis.cancel(); setUser(null); setView('login');}} className="px-5 py-2 bg-red-50 text-red-600 rounded-xl text-xs font-black uppercase tracking-widest">Logout</button>
                     </nav>
 
                     <div className="flex flex-1 overflow-hidden">
                         <aside className="w-72 bg-white border-r border-slate-100 p-6 hidden lg:flex flex-col shrink-0">
-                            <button onClick={() => setActiveNote({id: Date.now(), title: "New Document", content: ""})} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black hover:bg-blue-700 transition shadow-lg mb-8 text-xs tracking-widest">+ NEW NOTE</button>
-                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Saved History</h3>
+                            <button onClick={() => setActiveNote({id: Date.now(), title: "New Document", content: ""})} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black mb-8 text-xs tracking-widest hover:bg-blue-700 transition">+ NEW NOTE</button>
+                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Saved Notes</h3>
                             <div className="space-y-3 overflow-y-auto flex-1 custom-scrollbar pr-2">
                                 {notes.map(n => (
                                     <div key={n.id} onClick={() => setActiveNote(n)} className={`group p-4 rounded-2xl cursor-pointer border-2 transition-all relative ${activeNote.id === n.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-transparent hover:bg-slate-50'}`}>
                                         <p className={`font-bold truncate text-sm ${activeNote.id === n.id ? 'text-blue-600' : 'text-slate-700'}`}>{n.title}</p>
-                                        <p className="text-[10px] text-slate-400 mt-1">{n.timestamp || 'Recent'}</p>
-                                        <button onClick={(e) => deleteNote(n.id, e)} className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-500 font-bold bg-red-50 w-6 h-6 rounded-full flex items-center justify-center transition-opacity">×</button>
+                                        <button onClick={(e) => deleteNote(n.id, e)} className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-500 font-bold bg-white w-6 h-6 rounded-full shadow-sm flex items-center justify-center transition-opacity border border-red-100">×</button>
                                     </div>
                                 ))}
                             </div>
@@ -212,8 +207,11 @@
                                     <input type="range" min="0.5" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(parseFloat(e.target.value))} className="w-24" />
                                 </div>
                                 <div className="ml-auto flex gap-2">
-                                    <button onClick={toggleSpeech} className="px-6 py-2.5 bg-emerald-500 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-emerald-600 transition min-w-[100px]">{speechStatus === 'playing' ? 'Pause' : speechStatus === 'paused' ? 'Resume' : 'Listen'}</button>
-                                    <button onClick={() => { const updatedNotes = notes.filter(n => n.id !== activeNote.id); setNotes([{...activeNote, timestamp: new Date().toLocaleDateString()}, ...updatedNotes]); alert("Note Saved"); }} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-blue-700 transition">Save</button>
+                                    <button onClick={toggleSpeech} className="px-6 py-2.5 bg-emerald-500 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-emerald-600 transition min-w-[100px]">
+                                        {speechStatus === 'playing' ? 'Pause' : speechStatus === 'paused' ? 'Resume' : 'Listen'}
+                                    </button>
+                                    {speechStatus !== 'stopped' && <button onClick={stopSpeech} className="px-4 py-2.5 bg-slate-800 text-white rounded-xl font-black text-xs uppercase transition">Stop</button>}
+                                    <button onClick={() => { const updatedNotes = notes.filter(n => n.id !== activeNote.id); setNotes([{...activeNote, timestamp: new Date().toLocaleDateString()}, ...updatedNotes]); alert("Note Saved"); }} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs tracking-widest uppercase hover:bg-blue-700 transition shadow-md">Save</button>
                                 </div>
                             </div>
 
